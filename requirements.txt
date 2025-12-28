@@ -1,0 +1,23 @@
+# YOLO-SAM Toolkit - Python Dependencies (Base only)
+# PyTorch will be installed separately based on your hardware
+
+# YOLO
+ultralytics>=8.0.0
+
+# Roboflow integration
+roboflow>=1.1.0
+
+# Computer Vision
+opencv-python>=4.8.0
+pillow>=9.5.0
+
+# Scientific Computing
+numpy>=1.24.0,<2.0.0
+scipy>=1.10.0
+matplotlib>=3.7.0
+
+# Utilities
+tqdm>=4.65.0
+pyyaml>=6.0
+requests>=2.31.0
+

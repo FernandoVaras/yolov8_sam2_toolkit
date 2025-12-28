@@ -1,0 +1,13 @@
+# YOLO-SAM Toolkit - Conda Environment (Base dependencies only)
+# PyTorch will be installed separately based on your hardware
+
+name: yolo_sam_toolkit
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12.10
+  - pip
+  - setuptools
+  - wheel
+  - ninja  # Fundamental para que SAM 2 sea rápido

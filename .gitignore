@@ -1,0 +1,177 @@
+# YOLO-SAM Toolkit - Git Ignore File
+
+# ============================================
+# Python
+# ============================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# ============================================
+# Environments
+# ============================================
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Conda environments
+conda_env/
+yolo-toolkit-env/
+
+# ============================================
+# IDEs and Editors
+# ============================================
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Spyder
+.spyderproject
+.spyproject
+
+# ============================================
+# Model Weights and Data
+# ============================================
+# YOLO weights
+*.pt
+*.pth
+*.weights
+*.onnx
+
+# SAM2 checkpoints
+*.safetensors
+
+# Model directories
+weights/
+segment-anything-2/
+checkpoints/
+
+
+# Keep .gitkeep files
+!weights/.gitkeep
+!checkpoints/.gitkeep
+!models/.gitkeep
+
+# ============================================
+# Data and Outputs
+# ============================================
+
+# Keep directory structure with .gitkeep
+!data/input/.gitkeep
+!data/output/.gitkeep
+
+# Datasets
+datasets/
+*.zip
+*.tar.gz
+
+# Videos and images (outputs)
+outputs/
+results/
+runs/
+*.mp4
+*.avi
+*.mov
+*.jpg
+*.jpeg
+*.png
+
+# Keep example images
+!examples/*.jpg
+!examples/*.png
+
+# Logs
+*.log
+logs/
+
+# ============================================
+# Utils Generated Files
+# ============================================
+# Auto-generated model classes
+utils/model_classes.json
+
+# ============================================
+# OS specific
+# ============================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# ============================================
+# Temporary files
+# ============================================
+*.swp
+*.swo
+*.tmp
+*.bak
+*.orig
+
+# ============================================
+# Roboflow
+# ============================================
+# Roboflow downloaded datasets
+Roboflow/
+*-*/  # Pattern for Roboflow dataset folders
