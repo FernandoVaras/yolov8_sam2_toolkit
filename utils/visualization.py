@@ -91,7 +91,7 @@ class VisualizationProcessor:
             if not is_active:
                 continue
             
-            score = slot_scores[slot_idx] if slot_scores and slot_idx < len(slot_scores) else 0.0
+            score = slot_scores[slot_idx] if slot_scores is not None and slot_idx < len(slot_scores) else 0.0
             if score == 0.0:
                 continue
             
@@ -119,7 +119,7 @@ class VisualizationProcessor:
         
         return frame
     
-    def _draw_boxes(self, frame, boxes, slot_scores=None):
+    def _draw_boxes(self, frame, boxes, slot_scores=None, labels=None):
         if not self.show_boxes or boxes is None:
             return frame
         
@@ -135,14 +135,17 @@ class VisualizationProcessor:
             if x1 == 0 and y1 == 0 and x2 == 0 and y2 == 0:
                 continue
             
-            score = slot_scores[slot_idx] if slot_scores and slot_idx < len(slot_scores) else 1.0
+            score = slot_scores[slot_idx] if slot_scores is not None and slot_idx < len(slot_scores) else 1.0
             if score == 0.0:
                 continue
+            
+            # Obtener el label del objeto
+            label = labels[slot_idx] if labels is not None and slot_idx < len(labels) else None
             
             color = self._get_color(slot_idx)
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, self.box_thickness)
             
-            frame = self._draw_label(frame, (x1, y1), slot_idx, score, color)
+            frame = self._draw_label(frame, (x1, y1), slot_idx, score, color, label)
         
         return frame
     
@@ -154,9 +157,11 @@ class VisualizationProcessor:
             if keypoints is None or len(keypoints) == 0:
                 continue
             
-            score = slot_scores[slot_idx] if slot_scores and slot_idx < len(slot_scores) else 0.0
-            if score == 0.0:
-                continue
+            # Verificar si el slot tiene score válido
+            if slot_scores is not None and slot_idx < len(slot_scores):
+                score = slot_scores[slot_idx]
+                if score == 0.0:
+                    continue
             
             color = self._get_color(slot_idx)
             
@@ -179,7 +184,7 @@ class VisualizationProcessor:
             if centroid is None or centroid == (0, 0):
                 continue
             
-            score = slot_scores[slot_idx] if slot_scores and slot_idx < len(slot_scores) else 0.0
+            score = slot_scores[slot_idx] if slot_scores is not None and slot_idx < len(slot_scores) else 0.0
             if score == 0.0:
                 continue
             
@@ -190,12 +195,21 @@ class VisualizationProcessor:
         
         return frame
     
-    def _draw_label(self, frame, position, slot_id, score, color):
+    def _draw_label(self, frame, position, slot_id, score, color, label=None):
         x, y = position
-        label = f"ID:{slot_id} ({score:.2f})" if score > 0 else f"ID:{slot_id}"
+        
+        # Si hay label, usarlo, sino usar ID
+        if label:
+            text = f"{label}"
+        else:
+            text = f"ID:{slot_id}"
+        
+        # Agregar el score/confidence
+        if score > 0:
+            text += f" {score:.2f}"
         
         (tw, th), baseline = cv2.getTextSize(
-            label, cv2.FONT_HERSHEY_SIMPLEX, self.font_scale, 1
+            text, cv2.FONT_HERSHEY_SIMPLEX, self.font_scale, 1
         )
         
         padding = 8
@@ -213,7 +227,7 @@ class VisualizationProcessor:
         text_x = x + padding
         text_y = y - baseline - padding
         cv2.putText(
-            frame, label, (text_x, text_y),
+            frame, text, (text_x, text_y),
             cv2.FONT_HERSHEY_SIMPLEX, self.font_scale,
             (255, 255, 255), 2, cv2.LINE_AA
         )
@@ -270,6 +284,7 @@ class VisualizationProcessor:
         max_slots = 0
         centroids_data = None
         scores_data = None
+        labels_data = None
         
         for namespace, keys in self.input_keys.items():
             if 'centroids' in keys:
@@ -277,8 +292,15 @@ class VisualizationProcessor:
                 if centroids_data:
                     max_slots = max(max_slots, len(centroids_data))
             
+            # Buscar scores o confidences
             if 'scores' in keys:
                 scores_data = self._get_from_bus(frame_data, namespace, 'scores')
+            if 'confidences' in keys:
+                scores_data = self._get_from_bus(frame_data, namespace, 'confidences')
+            
+            # Buscar labels
+            if 'labels' in keys:
+                labels_data = self._get_from_bus(frame_data, namespace, 'labels')
         
         if centroids_data:
             self._update_trajectories(centroids_data)
@@ -291,7 +313,7 @@ class VisualizationProcessor:
             
             if 'boxes' in keys:
                 boxes = self._get_from_bus(frame_data, namespace, 'boxes')
-                frame = self._draw_boxes(frame, boxes, scores_data)
+                frame = self._draw_boxes(frame, boxes, scores_data, labels_data)
             
             if 'keypoints' in keys:
                 keypoints = self._get_from_bus(frame_data, namespace, 'keypoints')

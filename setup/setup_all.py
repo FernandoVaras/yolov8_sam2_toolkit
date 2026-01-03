@@ -31,25 +31,25 @@ def detect_hardware():
     # 1. Windows Detection Logic
     if os_name == "Windows":
         # Use wmic to find GPU names
-        success, stdout = subprocess.getstatusoutput("wmic path win32_VideoController get name")
-        if "NVIDIA" in stdout.upper():
+        status, stdout = subprocess.getstatusoutput("wmic path win32_VideoController get name")
+        if status == 0 and "NVIDIA" in stdout.upper():
             print("[DETECTED] NVIDIA GPU (Windows)")
             return "nvidia"
-        elif "AMD" in stdout.upper():
+        elif status == 0 and "AMD" in stdout.upper():
             print("[DETECTED] AMD GPU (Windows) -> Note: Using CPU mode for stability")
             return "cpu"
             
     # 2. Linux Detection Logic
     elif os_name == "Linux":
         # Check for NVIDIA drivers/SMI
-        success, _ = subprocess.getstatusoutput("nvidia-smi")
-        if success == 0:
+        status, _ = subprocess.getstatusoutput("nvidia-smi")
+        if status == 0:
             print("[DETECTED] NVIDIA GPU (Linux)")
             return "nvidia"
         
         # Check for AMD ROCm
-        success, _ = subprocess.getstatusoutput("rocm-smi")
-        if success == 0:
+        status, _ = subprocess.getstatusoutput("rocm-smi")
+        if status == 0:
             print("[DETECTED] AMD GPU (Linux)")
             return "amd"
 
@@ -86,6 +86,74 @@ def verify_install():
     except ImportError as e:
         print(f"[ERROR] Required library not found: {e}")
         return False
+
+def download_sam2_models_only(models_to_download):
+    """Downloads SAM 2 models without installing SAM 2 (assumes it's already installed)"""
+    print("\n--- Downloading SAM 2 Models Only ---")
+    
+    # Check if SAM 2 directory exists
+    if not os.path.exists("segment-anything-2"):
+        print("[WARNING] SAM 2 directory not found at 'segment-anything-2'")
+        create_dir = input("Create directory structure? (y/n): ").strip().lower()
+        if create_dir != 'y':
+            print("[INFO] Skipping model download. Please ensure SAM 2 is installed.")
+            return False
+    
+    # Create checkpoints directory
+    ckpt_dir = Path("segment-anything-2/checkpoints")
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Dictionary with all official SAM 2.1 models
+    available_models = {
+        "tiny": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt",
+        "small": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small.pt",
+        "base_plus": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_base_plus.pt",
+        "large": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt"
+    }
+    
+    # Download selected models
+    try:
+        import requests
+    except ImportError:
+        print("Installing requests library...")
+        run_command("pip install requests")
+        import requests
+    
+    for model_name in models_to_download:
+        if model_name not in available_models:
+            print(f"[WARNING] Unknown model: {model_name}, skipping...")
+            continue
+        
+        url = available_models[model_name]
+        dest = ckpt_dir / f"sam2.1_hiera_{model_name}.pt"
+        
+        if dest.exists():
+            print(f"[INFO] Model '{model_name}' already downloaded, skipping...")
+            continue
+        
+        print(f"📥 Downloading SAM 2.1 {model_name.upper()}... (this may take a while)")
+        try:
+            r = requests.get(url, stream=True)
+            r.raise_for_status()
+            
+            total_size = int(r.headers.get('content-length', 0))
+            downloaded = 0
+            
+            with open(dest, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total_size > 0:
+                        percent = (downloaded / total_size) * 100
+                        print(f"\rProgress: {percent:.1f}%", end="")
+            
+            print(f"\n✅ {model_name} downloaded successfully")
+        except Exception as e:
+            print(f"\n[ERROR] Failed to download {model_name}: {e}")
+            return False
+    
+    print("\n✅ SAM 2 models download complete!")
+    return True
 
 def setup_sam2(models_to_download):
     """Clones SAM 2 repository and downloads selected models"""
@@ -174,12 +242,16 @@ def get_sam2_selection():
     print("  - large      (Slowest, best accuracy)")
     print("\nYou can select multiple models separated by commas")
     print("Example: tiny,large  or just: large")
+    print("Type 'skip' to not download any models")
     
     while True:
         choice = input("\nWhich model(s) do you want to download? ").strip().lower()
         
+        if choice == 'skip':
+            return []
+        
         if not choice:
-            print("[ERROR] Please enter at least one model name")
+            print("[ERROR] Please enter at least one model name or 'skip'")
             continue
         
         # Parse selection
@@ -217,18 +289,34 @@ def main():
     print(f"This includes: PyTorch + TorchVision + TorchAudio + YOLOv8")
     
     install_pytorch = input("\nDo you want to install PyTorch and YOLOv8? (y/n): ").strip().lower()
-    if install_pytorch != 'y':
-        print("PyTorch installation skipped.")
     
-    # 3. Ask about SAM 2
-    install_sam2 = input("\nDo you want to install SAM 2? (y/n): ").strip().lower()
+    # 3. Ask about SAM 2 installation
+    print("\n" + "="*60)
+    print("SAM 2 INSTALLATION OPTIONS")
+    print("="*60)
+    print("1. Full installation (clone repository + install SAM 2 + download models)")
+    print("2. Models only (download models, skip SAM 2 installation)")
+    print("3. Skip SAM 2 completely")
+    
+    sam2_option = input("\nSelect option (1/2/3): ").strip()
+    
     sam2_models = []
+    install_full_sam2 = False
+    download_models_only = False
     
-    if install_sam2 == 'y':
+    if sam2_option == '1':
+        install_full_sam2 = True
         sam2_models = get_sam2_selection()
+    elif sam2_option == '2':
+        download_models_only = True
+        sam2_models = get_sam2_selection()
+    elif sam2_option == '3':
+        print("SAM 2 installation skipped.")
+    else:
+        print("[WARNING] Invalid option. Skipping SAM 2 installation.")
     
     # 4. Check if user wants to install anything
-    if install_pytorch != 'y' and not sam2_models:
+    if install_pytorch != 'y' and not sam2_models and not install_full_sam2:
         print("\nNo components selected for installation. Exiting.")
         return
     
@@ -237,10 +325,14 @@ def main():
     print("INSTALLATION SUMMARY")
     print("="*60)
     if install_pytorch == 'y':
-        print(f"- PyTorch for {hw.upper()}")
-        print(f"- YOLOv8 (Ultralytics)")
+        print(f"✓ PyTorch for {hw.upper()}")
+        print(f"✓ YOLOv8 (Ultralytics)")
+    if install_full_sam2:
+        print(f"✓ SAM 2 (full installation)")
+    if download_models_only:
+        print(f"✓ SAM 2 models only (no installation)")
     if sam2_models:
-        print(f"- SAM 2 with models: {', '.join(sam2_models)}")
+        print(f"✓ Models to download: {', '.join(sam2_models)}")
     
     confirm = input("\nProceed with installation? (y/n): ").strip().lower()
     if confirm != 'y':
@@ -264,21 +356,30 @@ def main():
             print("\n[!] Installation completed but verification failed.")
             return
     
-    # 7. Installation Phase - SAM 2 (if requested)
-    if sam2_models:
+    # 7. Installation Phase - SAM 2 (full installation)
+    if install_full_sam2 and sam2_models:
         if not setup_sam2(sam2_models):
             print("\n[!] SAM 2 installation failed.")
             return
     
-    # 8. Success message
+    # 8. Download models only (SAM 2 already installed)
+    if download_models_only and sam2_models:
+        if not download_sam2_models_only(sam2_models):
+            print("\n[!] SAM 2 models download failed.")
+            return
+    
+    # 9. Success message
     print("\n" + "="*60)
     print("SUCCESS! Your environment is ready.")
     if install_pytorch == 'y':
         print("✅ PyTorch and YOLOv8 installed")
-    if sam2_models:
+    if install_full_sam2:
+        print(f"✅ SAM 2 installed with models: {', '.join(sam2_models) if sam2_models else 'none'}")
+    if download_models_only and sam2_models:
         print(f"✅ SAM 2 models downloaded: {', '.join(sam2_models)}")
     print("Next step: Start building your pipeline!")
     print("="*60)
 
 if __name__ == "__main__":
     main()
+    

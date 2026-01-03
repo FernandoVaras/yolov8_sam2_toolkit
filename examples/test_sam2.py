@@ -19,7 +19,7 @@ mis_ratas = [
 ]
 
 pipeline = ProcessMedia(
-    source="data/input/video_2s.mp4",
+    source="data/input/frame_00001.jpg",
     processors=[
         SAM2Processor(
             input_source=mis_ratas,
@@ -29,13 +29,13 @@ pipeline = ProcessMedia(
         VisualizationProcessor(
             input_keys={"sam2": ["masks", "scores"]},
             show_masks=True,
-            show_boxes=True,
-            show_trajectories=True,
-            show_keypoints=True,
-            show_centroids=True,
+            show_boxes=False,
+            show_trajectories=False,
+            show_keypoints=False,
+            show_centroids=False,
         )
     ],
-    output=["video", "frames"]
+    output=["video", "frames", "json"]
 )
 
 pipeline.run()

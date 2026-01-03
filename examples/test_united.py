@@ -3,19 +3,24 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core import ProcessMedia, YOLOProcessor
+from core import ProcessMedia, YOLOProcessor, SAM2Processor
 from utils import VisualizationProcessor
 
 pipeline = ProcessMedia(
-    source="data/input/frame_00001.jpg",
+    source="data/input/video_10s.mp4",
     processors=[YOLOProcessor(
             model="models/yolo_8l_rat.pt",
-            confidence=0.7,
+            confidence=0.6,
             entities=2
         ), 
+        SAM2Processor(
+            input_source="yolo:boxes",
+            model_type="tiny",
+            max_entities=2
+        ),
         VisualizationProcessor(
-            input_keys={"yolo": ["boxes", "keypoints", "confidences", "labels"]},
-            show_masks=False,
+            input_keys={"yolo": ["keypoints"], "sam2": ["masks", "scores"]},
+            show_masks=True,
             show_boxes=True,
             show_trajectories=False,
             show_keypoints=True,
