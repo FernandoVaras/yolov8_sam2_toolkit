@@ -2,7 +2,8 @@ import sys
 import torch
 import numpy as np
 from pathlib import Path
-from scipy.spatial.distance import cdist
+from tracking.identity_matcher import IdentityMatcher
+from tracking.mask_utils import filter_duplicates
 
 CORE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CORE_DIR.parent
@@ -47,15 +48,17 @@ class SAM2Processor:
         self.output_key = output_key
         self.input_source = input_source
         self.max_entities = max_entities
-        self.proximity_threshold = proximity_threshold
-        self.area_tolerance = area_tolerance
         self.iou_threshold = iou_threshold
         
-        self.prev_centroids = [None] * max_entities
-        self.prev_areas = [None] * max_entities
-        self.prev_masks = [None] * max_entities
+        # Identity tracking
+        self.matcher = IdentityMatcher(
+            max_entities=max_entities,
+            proximity_threshold=proximity_threshold,
+            area_tolerance=area_tolerance
+        )
         self.first_frame_done = False
         
+        # Input mode detection
         self.is_bus_mode = isinstance(input_source, str)
         self.is_manual_mode = isinstance(input_source, list)
         
@@ -67,6 +70,7 @@ class SAM2Processor:
                 "  - Manual mode: input_source=[{'points': [[x, y]], 'labels': [1]}]"
             )
         
+        # Model initialization
         ckpt_path = SAM2_DIR / f"checkpoints/sam2.1_hiera_{model_type}.pt"
         config_name = f"configs/sam2.1/sam2.1_hiera_{'l' if model_type == 'large' else 't'}.yaml"
         
@@ -84,18 +88,8 @@ class SAM2Processor:
         self.model = build_sam2(config_name, str(ckpt_path), device=self.device)
         self.predictor = SAM2ImagePredictor(self.model)
 
-    def _get_centroid(self, mask):
-        y, x = np.where(mask)
-        if len(x) == 0:
-            return None
-        return (np.mean(x), np.mean(y))
-
-    def _calculate_iou(self, m1, m2):
-        intersection = np.logical_and(m1, m2).sum()
-        union = np.logical_or(m1, m2).sum()
-        return intersection / union if union > 0 else 0
-
     def _read_from_bus(self, frame_data):
+        """Read bounding boxes from the data bus."""
         if not self.is_bus_mode:
             return []
         
@@ -121,215 +115,79 @@ class SAM2Processor:
             print(f"[WARNING] SAM2: Error reading from bus '{self.input_source}': {e}")
             return []
 
-    def _filter_duplicates(self, masks, scores):
-        if len(masks) <= self.max_entities:
-            return masks, scores
-
-        areas = [m.sum() for m in masks]
-        sorted_idx = np.argsort(areas)[::-1]
-        ordered_masks = [masks[i] for i in sorted_idx]
-        ordered_scores = [scores[i] for i in sorted_idx]
-        
-        unique_masks = []
-        unique_scores = []
-        
-        for m_curr, score_curr in zip(ordered_masks, ordered_scores):
-            is_dup = False
-            for m_uniq in unique_masks:
-                if self._calculate_iou(m_curr, m_uniq) > self.iou_threshold:
-                    is_dup = True
-                    break
-            if not is_dup:
-                unique_masks.append(m_curr)
-                unique_scores.append(score_curr)
-                if len(unique_masks) >= self.max_entities:
-                    break
-        
-        return unique_masks, unique_scores
-
-    def _match_tracking(self, current_masks, current_scores):
-        if not current_masks:
-            return (
-                [None] * self.max_entities,
-                [None] * self.max_entities,
-                [None] * self.max_entities,
-                [0.0] * self.max_entities
-            )
-
-        curr_centroids = []
-        curr_areas = []
-        for m in current_masks:
-            c = self._get_centroid(m)
-            curr_centroids.append(c if c else (0, 0))
-            curr_areas.append(m.sum())
-
-        if all(c is None for c in self.prev_centroids):
-            matched_masks = [None] * self.max_entities
-            matched_centroids = [None] * self.max_entities
-            matched_areas = [None] * self.max_entities
-            matched_scores = [0.0] * self.max_entities
-            
-            for i, (mask, centroid, area, score) in enumerate(zip(
-                current_masks, curr_centroids, curr_areas, current_scores
-            )):
-                if i < self.max_entities:
-                    matched_masks[i] = mask
-                    matched_centroids[i] = centroid
-                    matched_areas[i] = area
-                    matched_scores[i] = score
-            
-            return matched_masks, matched_centroids, matched_areas, matched_scores
-
-        valid_prev_indices = [i for i, c in enumerate(self.prev_centroids) if c is not None]
-        
-        if not valid_prev_indices:
-            matched_masks = [None] * self.max_entities
-            matched_centroids = [None] * self.max_entities
-            matched_areas = [None] * self.max_entities
-            matched_scores = [0.0] * self.max_entities
-            
-            for i, (mask, centroid, area, score) in enumerate(zip(
-                current_masks, curr_centroids, curr_areas, current_scores
-            )):
-                if i < self.max_entities:
-                    matched_masks[i] = mask
-                    matched_centroids[i] = centroid
-                    matched_areas[i] = area
-                    matched_scores[i] = score
-            
-            return matched_masks, matched_centroids, matched_areas, matched_scores
-        
-        valid_prev_centroids = [self.prev_centroids[i] for i in valid_prev_indices]
-        dist_matrix = cdist(curr_centroids, valid_prev_centroids)
-        
-        matched_masks = [None] * self.max_entities
-        matched_centroids = [None] * self.max_entities
-        matched_areas = [None] * self.max_entities
-        matched_scores = [0.0] * self.max_entities
-        used_curr_idx = []
-
-        for matrix_col_idx, slot_idx in enumerate(valid_prev_indices):
-            dists = dist_matrix[:, matrix_col_idx]
-            area_ref = self.prev_areas[slot_idx]
-            
-            for i_curr in np.argsort(dists):
-                if i_curr in used_curr_idx:
-                    continue
-                
-                dist_ok = dists[i_curr] < self.proximity_threshold
-                var_area = abs(curr_areas[i_curr] - area_ref) / area_ref if area_ref and area_ref > 0 else 1.0
-                area_ok = var_area <= self.area_tolerance
-
-                if dist_ok and area_ok:
-                    matched_masks[slot_idx] = current_masks[i_curr]
-                    matched_centroids[slot_idx] = curr_centroids[i_curr]
-                    matched_areas[slot_idx] = curr_areas[i_curr]
-                    matched_scores[slot_idx] = current_scores[i_curr]
-                    used_curr_idx.append(i_curr)
-                    break
-
-        for i_curr, mask in enumerate(current_masks):
-            if i_curr not in used_curr_idx:
-                for slot_idx in range(self.max_entities):
-                    if matched_masks[slot_idx] is None:
-                        matched_masks[slot_idx] = mask
-                        matched_centroids[slot_idx] = curr_centroids[i_curr]
-                        matched_areas[slot_idx] = curr_areas[i_curr]
-                        matched_scores[slot_idx] = current_scores[i_curr]
-                        break
-
-        return matched_masks, matched_centroids, matched_areas, matched_scores
-
-    def process(self, frame_data):
-        frame = frame_data['frame']
-        h, w = frame.shape[:2]
-        self.predictor.set_image(frame)
+    def _segment_from_manual_prompts(self):
+        """Segment using manual point prompts (first frame initialization)."""
         all_masks = []
         all_scores = []
         
-        if not self.first_frame_done and self.is_manual_mode:
-            print(f"[SAM2] Initializing with {len(self.input_source)} manual prompts")
-            
-            for idx, prompt in enumerate(self.input_source):
-                if idx >= self.max_entities:
-                    print(f"[SAM2] Skipping prompt {idx+1}: exceeds max_entities={self.max_entities}")
-                    break
-                    
-                pts = np.array(prompt["points"])
-                lbls = np.array(prompt.get("labels", [1] * len(pts)))
-                
-                masks, scores, _ = self.predictor.predict(
-                    point_coords=pts,
-                    point_labels=lbls,
-                    multimask_output=False
-                )
-                
-                if len(masks) > 0:
-                    all_masks.append(masks[0])
-                    all_scores.append(float(scores[0]))
-                    print(f"[SAM2] Slot {idx}: Initialized (score: {scores[0]:.3f})")
-            
-            self.first_frame_done = True
+        print(f"[SAM2] Initializing with {len(self.input_source)} manual prompts")
         
-        elif self.first_frame_done and self.is_manual_mode:
-            active_slots = [i for i, c in enumerate(self.prev_centroids) if c is not None]
+        for idx, prompt in enumerate(self.input_source):
+            if idx >= self.max_entities:
+                print(f"[SAM2] Skipping prompt {idx+1}: exceeds max_entities={self.max_entities}")
+                break
             
-            for slot_idx in active_slots:
-                pt = self.prev_centroids[slot_idx]
-                
-                masks, scores, _ = self.predictor.predict(
-                    point_coords=np.array([pt]),
-                    point_labels=np.array([1]),
-                    multimask_output=False
-                )
-                if len(masks) > 0:
-                    all_masks.append(masks[0])
-                    all_scores.append(float(scores[0]))
-        
-        elif self.is_bus_mode:
-            boxes = self._read_from_bus(frame_data)
+            pts = np.array(prompt["points"])
+            lbls = np.array(prompt.get("labels", [1] * len(pts)))
             
-            if len(boxes) > 0:
-                print(f"[SAM2] Using {len(boxes)} boxes from bus '{self.input_source}'")
-                for box in boxes[:self.max_entities]:
-                    masks, scores, _ = self.predictor.predict(
-                        box=np.array(box),
-                        multimask_output=False
-                    )
-                    if len(masks) > 0:
-                        all_masks.append(masks[0])
-                        all_scores.append(float(scores[0]))
+            masks, scores, _ = self.predictor.predict(
+                point_coords=pts,
+                point_labels=lbls,
+                multimask_output=False
+            )
             
-            elif any(c is not None for c in self.prev_centroids):
-                active_slots = [i for i, c in enumerate(self.prev_centroids) if c is not None]
-                print(f"[SAM2] Bus empty, auto-tracking {len(active_slots)} slots")
-                
-                for slot_idx in active_slots:
-                    pt = self.prev_centroids[slot_idx]
-                    
-                    masks, scores, _ = self.predictor.predict(
-                        point_coords=np.array([pt]),
-                        point_labels=np.array([1]),
-                        multimask_output=False
-                    )
-                    if len(masks) > 0:
-                        all_masks.append(masks[0])
-                        all_scores.append(float(scores[0]))
-            else:
-                print(f"[WARNING] SAM2: No input available on Frame 0. Cannot initialize tracking.")
+            if len(masks) > 0:
+                all_masks.append(masks[0])
+                all_scores.append(float(scores[0]))
+                print(f"[SAM2] Slot {idx}: Initialized (score: {scores[0]:.3f})")
         
-        else:
-            print(f"[WARNING] SAM2: Unexpected state - no valid input mode detected")
-        
-        unique_masks, unique_scores = self._filter_duplicates(all_masks, all_scores)
-        matched_masks, matched_centroids, matched_areas, matched_scores = self._match_tracking(
-            unique_masks, unique_scores
-        )
+        self.first_frame_done = True
+        return all_masks, all_scores
 
-        self.prev_centroids = matched_centroids
-        self.prev_areas = matched_areas
-        self.prev_masks = matched_masks
+    def _segment_from_centroids(self):
+        """Segment using previous frame centroids (auto-tracking)."""
+        all_masks = []
+        all_scores = []
+        
+        active_slots = [i for i, c in enumerate(self.matcher.prev_centroids) if c is not None]
+        
+        for slot_idx in active_slots:
+            pt = self.matcher.prev_centroids[slot_idx]
+            
+            masks, scores, _ = self.predictor.predict(
+                point_coords=np.array([pt]),
+                point_labels=np.array([1]),
+                multimask_output=False
+            )
+            if len(masks) > 0:
+                all_masks.append(masks[0])
+                all_scores.append(float(scores[0]))
+        
+        return all_masks, all_scores
 
+    def _segment_from_boxes(self, boxes):
+        """Segment using bounding boxes from bus."""
+        all_masks = []
+        all_scores = []
+        
+        print(f"[SAM2] Using {len(boxes)} boxes from bus '{self.input_source}'")
+        
+        for box in boxes[:self.max_entities]:
+            masks, scores, _ = self.predictor.predict(
+                box=np.array(box),
+                multimask_output=False
+            )
+            if len(masks) > 0:
+                all_masks.append(masks[0])
+                all_scores.append(float(scores[0]))
+        
+        return all_masks, all_scores
+
+    def _format_output(self, matched_data, frame_shape):
+        """Format matched data into consistent output structure."""
+        matched_masks, matched_centroids, matched_areas, matched_scores = matched_data
+        h, w = frame_shape[:2]
+        
         output_masks = []
         output_centroids = []
         output_areas = []
@@ -346,7 +204,63 @@ class SAM2Processor:
                 output_centroids.append((0, 0))
                 output_areas.append(0)
                 output_scores.append(0.0)
+        
+        return output_masks, output_centroids, output_areas, output_scores
 
+    def process(self, frame_data):
+        """
+        Main processing method for SAM2 segmentation with tracking.
+        
+        Args:
+            frame_data: Dictionary containing 'frame' and data from other processors
+            
+        Returns:
+            Updated frame_data with segmentation results in output_key namespace
+        """
+        frame = frame_data['frame']
+        self.predictor.set_image(frame)
+        
+        all_masks = []
+        all_scores = []
+        
+        # Determine segmentation strategy
+        if not self.first_frame_done and self.is_manual_mode:
+            # First frame with manual prompts
+            all_masks, all_scores = self._segment_from_manual_prompts()
+        
+        elif self.first_frame_done and self.is_manual_mode:
+            # Subsequent frames in manual mode: auto-track
+            all_masks, all_scores = self._segment_from_centroids()
+        
+        elif self.is_bus_mode:
+            boxes = self._read_from_bus(frame_data)
+            
+            if len(boxes) > 0:
+                # Bus has data: segment from boxes
+                all_masks, all_scores = self._segment_from_boxes(boxes)
+            elif any(c is not None for c in self.matcher.prev_centroids):
+                # Bus empty but have previous tracking: auto-track
+                active_slots = [i for i, c in enumerate(self.matcher.prev_centroids) if c is not None]
+                print(f"[SAM2] Bus empty, auto-tracking {len(active_slots)} slots")
+                all_masks, all_scores = self._segment_from_centroids()
+            else:
+                print(f"[WARNING] SAM2: No input available on Frame 0. Cannot initialize tracking.")
+        
+        else:
+            print(f"[WARNING] SAM2: Unexpected state - no valid input mode detected")
+        
+        # Filter duplicates and match to identity slots
+        unique_masks, unique_scores = filter_duplicates(
+            all_masks, all_scores, self.max_entities, self.iou_threshold
+        )
+        matched_data = self.matcher.match(unique_masks, unique_scores)
+        
+        # Format output
+        output_masks, output_centroids, output_areas, output_scores = self._format_output(
+            matched_data, frame.shape
+        )
+        
+        # Write to bus
         frame_data[self.output_key] = {
             'masks': output_masks,
             'centroids': output_centroids,
@@ -354,15 +268,16 @@ class SAM2Processor:
             'scores': output_scores
         }
         
+        # Add metadata
         if 'metadata' not in frame_data:
             frame_data['metadata'] = {}
         
-        active_entities = sum(1 for m in matched_masks if m is not None)
+        active_entities = sum(1 for m in matched_data[0] if m is not None)
         frame_data['metadata'][f'{self.output_key}_info'] = {
             'entities_active': active_entities,
             'max_entities': self.max_entities,
-            'proximity_threshold': self.proximity_threshold,
-            'area_tolerance': self.area_tolerance,
+            'proximity_threshold': self.matcher.proximity_threshold,
+            'area_tolerance': self.matcher.area_tolerance,
             'mode': 'manual_init' if (not self.first_frame_done and self.is_manual_mode) 
                     else 'auto_tracking' if self.first_frame_done and self.is_manual_mode 
                     else 'bus' if self.is_bus_mode else 'unknown'
@@ -371,8 +286,8 @@ class SAM2Processor:
         return frame_data
 
     def reset_tracking(self):
-        self.prev_centroids = [None] * self.max_entities
-        self.prev_areas = [None] * self.max_entities
-        self.prev_masks = [None] * self.max_entities
+        """Reset tracking state to initial conditions."""
+        self.matcher.reset()
         self.first_frame_done = False
         print("[SAM2] Tracking state reset")
+        

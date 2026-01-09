@@ -3,8 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core import ProcessMedia, YOLOProcessor, SAM2Processor
-from utils import VisualizationProcessor
+from core import ProcessMedia, YOLOProcessor, SAM2Processor, VisualizationProcessor
 
 pipeline = ProcessMedia(
     source="data/input/video_10s.mp4",
@@ -15,16 +14,16 @@ pipeline = ProcessMedia(
         ), 
         SAM2Processor(
             input_source="yolo:boxes",
-            model_type="tiny",
+            model_type="large",
             max_entities=2
         ),
         VisualizationProcessor(
-            input_keys={"yolo": ["keypoints"], "sam2": ["masks", "scores"]},
+            input_keys={"sam2": ["masks", "scores", "centroids"]},
             show_masks=True,
             show_boxes=True,
-            show_trajectories=False,
+            show_trajectories=True,
             show_keypoints=True,
-            show_centroids=False,
+            show_centroids=True,
         )
 ],
     output=["video", "json", "frames"]

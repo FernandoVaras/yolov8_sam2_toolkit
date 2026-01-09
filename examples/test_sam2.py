@@ -3,8 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core import ProcessMedia, SAM2Processor
-from utils import VisualizationProcessor
+from core import ProcessMedia, SAM2Processor, VisualizationProcessor
 
 # Configuración de los puntos
 mis_ratas = [

@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from collections import deque
+from tracking.trajectory_tracker import TrajectoryTracker
 
 
 class VisualizationProcessor:
@@ -51,7 +51,8 @@ class VisualizationProcessor:
         self.mask_border_thickness = mask_border_thickness
         self.trail_thickness = trail_thickness
         
-        self.trajectory_history = {}
+        # Trajectory tracking delegated to separate module
+        self.tracker = TrajectoryTracker(max_length=trail_length)
         
         self.colors = [
             (255, 100, 100),
@@ -139,7 +140,6 @@ class VisualizationProcessor:
             if score == 0.0:
                 continue
             
-            # Obtener el label del objeto
             label = labels[slot_idx] if labels is not None and slot_idx < len(labels) else None
             
             color = self._get_color(slot_idx)
@@ -157,7 +157,6 @@ class VisualizationProcessor:
             if keypoints is None or len(keypoints) == 0:
                 continue
             
-            # Verificar si el slot tiene score válido
             if slot_scores is not None and slot_idx < len(slot_scores):
                 score = slot_scores[slot_idx]
                 if score == 0.0:
@@ -198,13 +197,11 @@ class VisualizationProcessor:
     def _draw_label(self, frame, position, slot_id, score, color, label=None):
         x, y = position
         
-        # Si hay label, usarlo, sino usar ID
         if label:
             text = f"{label}"
         else:
             text = f"ID:{slot_id}"
         
-        # Agregar el score/confidence
         if score > 0:
             text += f" {score:.2f}"
         
@@ -239,10 +236,8 @@ class VisualizationProcessor:
             return frame
         
         for slot_idx in range(max_slots):
-            if slot_idx not in self.trajectory_history:
-                continue
+            history = self.tracker.get_trajectory(slot_idx)
             
-            history = list(self.trajectory_history[slot_idx])
             if len(history) < 2:
                 continue
             
@@ -269,14 +264,9 @@ class VisualizationProcessor:
         return frame
     
     def _update_trajectories(self, centroids):
+        """Update trajectory tracker with new centroid data."""
         for slot_idx, centroid in enumerate(centroids):
-            if slot_idx not in self.trajectory_history:
-                self.trajectory_history[slot_idx] = deque(maxlen=self.trail_length)
-            
-            if centroid is not None and centroid != (0, 0):
-                self.trajectory_history[slot_idx].append(centroid)
-            else:
-                self.trajectory_history[slot_idx].append(None)
+            self.tracker.update(slot_idx, centroid)
     
     def process(self, frame_data):
         frame = frame_data['frame'].copy()
@@ -292,13 +282,12 @@ class VisualizationProcessor:
                 if centroids_data:
                     max_slots = max(max_slots, len(centroids_data))
             
-            # Buscar scores o confidences
             if 'scores' in keys:
                 scores_data = self._get_from_bus(frame_data, namespace, 'scores')
+                
             if 'confidences' in keys:
                 scores_data = self._get_from_bus(frame_data, namespace, 'confidences')
             
-            # Buscar labels
             if 'labels' in keys:
                 labels_data = self._get_from_bus(frame_data, namespace, 'labels')
         
@@ -340,5 +329,6 @@ class VisualizationProcessor:
         return frame_data
     
     def reset_trajectories(self):
-        self.trajectory_history.clear()
+        """Reset all trajectory history."""
+        self.tracker.reset()
         print("[VIS] Trajectory history reset")
