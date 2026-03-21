@@ -6,10 +6,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core import ProcessMedia, YOLOProcessor, SAM2Processor, VisualizationProcessor
 
 pipeline = ProcessMedia(
-    source="data/input/video_10s.mp4",
+    source="data/input/video_2s.mp4",
     processors=[YOLOProcessor(
-            model="models/yolo_8l_rat.pt",
-            confidence=0.6,
+            model="models/best (5).pt",
+            confidence=0.5,
             entities=2
         ), 
         SAM2Processor(
@@ -18,10 +18,10 @@ pipeline = ProcessMedia(
             max_entities=2
         ),
         VisualizationProcessor(
-            input_keys={"sam2": ["masks", "scores", "centroids"]},
+            input_keys={"yolo": ["boxes", "keypoints", "confidences", "labels"], "sam2": ["masks", "scores", "centroids"]},
             show_masks=True,
             show_boxes=True,
-            show_trajectories=True,
+            show_trajectories=False,
             show_keypoints=True,
             show_centroids=True,
         )

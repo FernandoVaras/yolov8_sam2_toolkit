@@ -119,16 +119,21 @@ datasets/
 *.zip
 *.tar.gz
 
-# Videos and images (outputs)
+# Videos, images, and data outputs
 outputs/
 results/
 runs/
+data/input/*
+data/output/*
+!data/input/.gitkeep
+!data/output/.gitkeep
 *.mp4
 *.avi
 *.mov
 *.jpg
 *.jpeg
 *.png
+*.jsonl
 
 # Keep example images
 !examples/*.jpg
@@ -159,6 +164,11 @@ Desktop.ini
 
 # Linux
 *~
+
+# ============================================
+# OpenH264 DLL (downloaded by setup_all.py)
+# ============================================
+openh264-*.dll
 
 # ============================================
 # Temporary files

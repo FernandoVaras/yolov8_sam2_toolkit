@@ -6,19 +6,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core import ProcessMedia, YOLOProcessor, VisualizationProcessor
 
 pipeline = ProcessMedia(
-    source="data/input/frame_00001.jpg",
+    source="data/input/video_2s.mp4",
     processors=[YOLOProcessor(
             model="models/yolo_8l_rat.pt",
-            confidence=0.7,
-            entities=2
-        ), 
+            confidence=0.5,
+            max_entities=2,
+            max_overlap=0.9,
+            min_entities=2,
+            use_tracking=True,
+        ),
         VisualizationProcessor(
             input_keys={"yolo": ["boxes", "keypoints", "confidences", "labels"]},
             show_masks=False,
             show_boxes=True,
-            show_trajectories=False,
             show_keypoints=True,
-            show_centroids=False,
         )
 ],
     output=["video", "json", "frames"]

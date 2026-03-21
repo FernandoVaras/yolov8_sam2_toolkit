@@ -8,17 +8,17 @@ from core import ProcessMedia, SAM2Processor, VisualizationProcessor
 # Configuración de los puntos
 mis_ratas = [
     {
-        "points": [[320, 810]],             # Rata 1: 
+        "points": [[300, 500]],             # Rata 1: 
         "labels": [1]
     },
     {
-        "points": [[500, 770]],             # Rata 2: 
+        "points": [[800, 70]],             # Rata 2: 
         "labels": [1]
     }
 ]
 
 pipeline = ProcessMedia(
-    source="data/input/frame_00001.jpg",
+    source="data/input/clip_1m17s-1m27s (1).mp4",
     processors=[
         SAM2Processor(
             input_source=mis_ratas,

@@ -131,7 +131,7 @@ def download_sam2_models_only(models_to_download):
             print(f"[INFO] Model '{model_name}' already downloaded, skipping...")
             continue
         
-        print(f"📥 Downloading SAM 2.1 {model_name.upper()}... (this may take a while)")
+        print(f"[DL] Downloading SAM 2.1 {model_name.upper()}... (this may take a while)")
         try:
             r = requests.get(url, stream=True)
             r.raise_for_status()
@@ -147,12 +147,12 @@ def download_sam2_models_only(models_to_download):
                         percent = (downloaded / total_size) * 100
                         print(f"\rProgress: {percent:.1f}%", end="")
             
-            print(f"\n✅ {model_name} downloaded successfully")
+            print(f"\n[OK] {model_name} downloaded successfully")
         except Exception as e:
             print(f"\n[ERROR] Failed to download {model_name}: {e}")
             return False
     
-    print("\n✅ SAM 2 models download complete!")
+    print("\n[OK] SAM 2 models download complete!")
     return True
 
 def setup_sam2(models_to_download):
@@ -206,7 +206,7 @@ def setup_sam2(models_to_download):
             print(f"[INFO] Model '{model_name}' already downloaded, skipping...")
             continue
         
-        print(f"📥 Downloading SAM 2.1 {model_name.upper()}... (this may take a while)")
+        print(f"[DL] Downloading SAM 2.1 {model_name.upper()}... (this may take a while)")
         try:
             r = requests.get(url, stream=True)
             r.raise_for_status()
@@ -222,13 +222,62 @@ def setup_sam2(models_to_download):
                         percent = (downloaded / total_size) * 100
                         print(f"\rProgress: {percent:.1f}%", end="")
             
-            print(f"\n✅ {model_name} downloaded successfully")
+            print(f"\n[OK] {model_name} downloaded successfully")
         except Exception as e:
             print(f"\n[ERROR] Failed to download {model_name}: {e}")
             return False
     
-    print("\n✅ SAM 2 setup complete!")
+    print("\n[OK] SAM 2 setup complete!")
     return True
+
+def download_openh264():
+    """Downloads the OpenH264 DLL so OpenCV can write H.264 videos playable on Windows."""
+    import bz2
+    print("\n--- Downloading OpenH264 DLL ---")
+
+    dll_name = "openh264-1.8.0-win64.dll"
+    dll_url = "http://ciscobinary.openh264.org/openh264-1.8.0-win64.dll.bz2"
+    dest = Path(dll_name)
+
+    if dest.exists():
+        print(f"[INFO] {dll_name} already exists, skipping.")
+        return True
+
+    try:
+        import requests
+    except ImportError:
+        print("Installing requests library...")
+        run_command("pip install requests")
+        import requests
+
+    try:
+        print(f"Downloading {dll_name} from Cisco...")
+        r = requests.get(dll_url, stream=True)
+        r.raise_for_status()
+
+        total_size = int(r.headers.get('content-length', 0))
+        downloaded = 0
+        compressed = b''
+
+        for chunk in r.iter_content(chunk_size=8192):
+            compressed += chunk
+            downloaded += len(chunk)
+            if total_size > 0:
+                percent = (downloaded / total_size) * 100
+                print(f"\rProgress: {percent:.1f}%", end="")
+
+        print("\nDecompressing...")
+        dll_data = bz2.decompress(compressed)
+
+        with open(dest, 'wb') as f:
+            f.write(dll_data)
+
+        print(f"[OK] {dll_name} installed ({len(dll_data) / 1024:.0f} KB)")
+        return True
+    except Exception as e:
+        print(f"\n[ERROR] Failed to download OpenH264: {e}")
+        return False
+
 
 def get_sam2_selection():
     """Prompts user to select SAM2 models to download"""
@@ -315,25 +364,39 @@ def main():
     else:
         print("[WARNING] Invalid option. Skipping SAM 2 installation.")
     
-    # 4. Check if user wants to install anything
-    if install_pytorch != 'y' and not sam2_models and not install_full_sam2:
+    # 4. Ask about OpenH264 (Windows video compatibility)
+    install_openh264 = False
+    if platform.system() == "Windows":
+        print("\n" + "="*60)
+        print("VIDEO COMPATIBILITY (Windows)")
+        print("="*60)
+        print("OpenCV uses the mp4v codec by default, which some Windows")
+        print("media players cannot open. Downloading the OpenH264 DLL")
+        print("(~1.5 MB) allows OpenCV to write H.264 videos that play")
+        print("natively on any Windows player.")
+        install_openh264 = input("\nDownload OpenH264 DLL? (y/n): ").strip().lower() == 'y'
+
+    # 5. Check if user wants to install anything
+    if install_pytorch != 'y' and not sam2_models and not install_full_sam2 and not install_openh264:
         print("\nNo components selected for installation. Exiting.")
         return
-    
-    # 5. Show installation summary
+
+    # 6. Show installation summary
     print("\n" + "="*60)
     print("INSTALLATION SUMMARY")
     print("="*60)
     if install_pytorch == 'y':
-        print(f"✓ PyTorch for {hw.upper()}")
-        print(f"✓ YOLOv8 (Ultralytics)")
+        print(f"[+] PyTorch for {hw.upper()}")
+        print(f"[+] YOLOv8 (Ultralytics)")
     if install_full_sam2:
-        print(f"✓ SAM 2 (full installation)")
+        print(f"[+] SAM 2 (full installation)")
     if download_models_only:
-        print(f"✓ SAM 2 models only (no installation)")
+        print(f"[+] SAM 2 models only (no installation)")
     if sam2_models:
-        print(f"✓ Models to download: {', '.join(sam2_models)}")
-    
+        print(f"[+] Models to download: {', '.join(sam2_models)}")
+    if install_openh264:
+        print(f"[+] OpenH264 DLL (Windows video compatibility)")
+
     confirm = input("\nProceed with installation? (y/n): ").strip().lower()
     if confirm != 'y':
         print("Installation cancelled by user.")
@@ -368,15 +431,22 @@ def main():
             print("\n[!] SAM 2 models download failed.")
             return
     
-    # 9. Success message
+    # 9. OpenH264 DLL
+    if install_openh264:
+        if not download_openh264():
+            print("\n[!] OpenH264 download failed. Videos will use mp4v codec.")
+
+    # 10. Success message
     print("\n" + "="*60)
     print("SUCCESS! Your environment is ready.")
     if install_pytorch == 'y':
-        print("✅ PyTorch and YOLOv8 installed")
+        print("[OK] PyTorch and YOLOv8 installed")
     if install_full_sam2:
-        print(f"✅ SAM 2 installed with models: {', '.join(sam2_models) if sam2_models else 'none'}")
+        print(f"[OK] SAM 2 installed with models: {', '.join(sam2_models) if sam2_models else 'none'}")
     if download_models_only and sam2_models:
-        print(f"✅ SAM 2 models downloaded: {', '.join(sam2_models)}")
+        print(f"[OK] SAM 2 models downloaded: {', '.join(sam2_models)}")
+    if install_openh264:
+        print("[OK] OpenH264 DLL installed (H.264 video output enabled)")
     print("Next step: Start building your pipeline!")
     print("="*60)
 
