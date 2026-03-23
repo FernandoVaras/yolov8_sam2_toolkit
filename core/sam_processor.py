@@ -22,7 +22,7 @@ except ImportError as e:
 
 
 class SAM2Processor:
-    """SAM 2 Processor with fixed identity slot tracking and adaptive frame skipping."""
+    """SAM 2 Processor with fixed identity slot tracking."""
 
     def __init__(
         self,
@@ -32,8 +32,7 @@ class SAM2Processor:
         max_entities=2,
         proximity_threshold=50,
         area_tolerance=0.10,
-        iou_threshold=0.5,
-        skip_threshold=5.0
+        iou_threshold=0.5
     ):
         """
         Args:
@@ -44,7 +43,6 @@ class SAM2Processor:
             proximity_threshold: Maximum distance (px) for identity matching
             area_tolerance: Allowed area variation (0.4 = +/-40%)
             iou_threshold: Threshold to remove duplicate masks
-            skip_threshold: Max centroid displacement (px) to reuse previous output (0 = disabled)
         """
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.use_autocast = self.device.type == 'cuda'
@@ -52,7 +50,6 @@ class SAM2Processor:
         self.input_source = input_source
         self.max_entities = max_entities
         self.iou_threshold = iou_threshold
-        self.skip_threshold = skip_threshold
 
         # Identity tracking
         self.matcher = IdentityMatcher(
@@ -61,7 +58,6 @@ class SAM2Processor:
             area_tolerance=area_tolerance
         )
         self.first_frame_done = False
-        self._prev_output = None
 
         # Input mode detection
         self.is_bus_mode = isinstance(input_source, str)
@@ -89,57 +85,9 @@ class SAM2Processor:
         print(f"[SAM2] Checkpoint: {ckpt_path}")
         print(f"[SAM2] Input mode: {'Bus' if self.is_bus_mode else 'Manual' if self.is_manual_mode else 'Auto-tracking'}")
         print(f"[SAM2] Fixed identity slots: {max_entities}")
-        print(f"[SAM2] Adaptive skip threshold: {skip_threshold}px")
 
         self.model = build_sam2(config_name, str(ckpt_path), device=self.device)
         self.predictor = SAM2ImagePredictor(self.model)
-
-    # ------------------------------------------------------------------
-    # Adaptive skip
-    # ------------------------------------------------------------------
-
-    def _centroid_displacement(self, new_centroids):
-        """Max displacement of active centroids vs previous frame."""
-        prev = self.matcher.prev_centroids
-        max_disp = 0.0
-        for p, n in zip(prev, new_centroids):
-            if p is None or n is None or n == (0, 0):
-                continue
-            dx = n[0] - p[0]
-            dy = n[1] - p[1]
-            max_disp = max(max_disp, (dx * dx + dy * dy) ** 0.5)
-        return max_disp
-
-    def _try_skip(self, frame_data):
-        """Return True (and populate frame_data) if the frame can be skipped."""
-        if self.skip_threshold <= 0:
-            return False
-        if not self.first_frame_done or self._prev_output is None:
-            return False
-        if all(c is None for c in self.matcher.prev_centroids):
-            return False
-
-        prev_centroids = self._prev_output.get('centroids', [])
-        if not prev_centroids:
-            return False
-
-        disp = self._centroid_displacement(prev_centroids)
-        if disp >= self.skip_threshold:
-            return False
-
-        # Reuse previous output
-        frame_data[self.output_key] = self._prev_output
-        if 'metadata' not in frame_data:
-            frame_data['metadata'] = {}
-        active = sum(1 for s in self._prev_output.get('scores', []) if s > 0)
-        frame_data['metadata'][f'{self.output_key}_info'] = {
-            'entities_active': active,
-            'max_entities': self.max_entities,
-            'proximity_threshold': self.matcher.proximity_threshold,
-            'area_tolerance': self.matcher.area_tolerance,
-            'mode': 'skipped_reuse'
-        }
-        return True
 
     # ------------------------------------------------------------------
     # Bus reading
@@ -278,10 +226,6 @@ class SAM2Processor:
         """Run SAM2 segmentation with identity tracking on a single frame."""
         frame = frame_data['frame']
 
-        # Adaptive skip: reuse previous output if centroids barely moved
-        if self._try_skip(frame_data):
-            return frame_data
-
         # Compute image embeddings
         with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_autocast):
             self.predictor.set_image(frame)
@@ -316,19 +260,17 @@ class SAM2Processor:
         )
         matched_data = self.matcher.match(unique_masks, unique_scores)
 
-        # Format and cache output
+        # Format output
         output_masks, output_centroids, output_areas, output_scores = self._format_output(
             matched_data, frame.shape
         )
 
-        bus_output = {
+        frame_data[self.output_key] = {
             'masks': output_masks,
             'centroids': output_centroids,
             'areas': output_areas,
             'scores': output_scores
         }
-        self._prev_output = bus_output
-        frame_data[self.output_key] = bus_output
 
         # Metadata
         if 'metadata' not in frame_data:
@@ -351,5 +293,4 @@ class SAM2Processor:
         """Reset tracking state to initial conditions."""
         self.matcher.reset()
         self.first_frame_done = False
-        self._prev_output = None
         print("[SAM2] Tracking state reset")
